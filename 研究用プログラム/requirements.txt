@@ -1,0 +1,9 @@
+numpy
+pandas
+matplotlib
+einops
+pyyaml
+reformer-pytorch
+axial-positional-embedding
+local-attention
+colt5-attention
