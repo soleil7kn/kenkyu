@@ -2,7 +2,7 @@ model_name=SkipTimeformer
 
 python -u run.py \
   --is_training 1 \
-  --root_path ./dataset/ETT-small/ \
+  --root_path ~/dataset/ETT-small/ \
   --data_path ETTh1.csv \
   --model_id ETTh1_96_96 \
   --model $model_name \
