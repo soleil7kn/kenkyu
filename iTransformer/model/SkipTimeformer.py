@@ -105,9 +105,9 @@ class Model(nn.Module):
             for s in self.skip_rates
         )
 
-        self.skip_logits = nn.Parameter(
-            torch.zeros(self.num_skip)
-        )
+        #self.skip_logits = nn.Parameter(
+        #    torch.zeros(self.num_skip)
+        #)
 
         self.multi_skip = MultiSkipEmbedding(
             skip_rates=self.skip_rates
@@ -186,7 +186,7 @@ class Model(nn.Module):
         # skipごとに重み付け
         enc_out = enc_out * weights
         """
-        
+
         enc_out = enc_out.reshape(
             B,
             M * L * D
