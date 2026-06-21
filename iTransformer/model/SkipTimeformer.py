@@ -71,10 +71,11 @@ class Model(nn.Module):
             configs.dropout
         )
 
-        # Multi Skip
+        self.skip_rates = [1, 2, 4]
+
         self.multi_skip = MultiSkipEmbedding(
-            skip_rates=[2, 4]
-        )
+            skip_rates=self.skip_rates
+)
 
         # Transformer Encoder
         self.encoder = Encoder(
@@ -101,8 +102,12 @@ class Model(nn.Module):
         )
 
         # Prediction Head
-        self.max_len = (configs.seq_len + 1) // 2
-        self.num_skip = 6
+        self.max_len = max(
+            (configs.seq_len + s - 1) // s
+            for s in self.skip_rates
+        )
+
+        self.num_skip = sum(self.skip_rates)
 
         self.head = nn.Linear(
             self.num_skip * self.max_len * configs.d_model,
@@ -135,7 +140,7 @@ class Model(nn.Module):
             enc_out
         )
 
-        print("skip_tokens :", skip_tokens.shape)
+        # print("skip_tokens :", skip_tokens.shape)
 
         # [B, M, L, D]
         B, M, L, D = skip_tokens.shape
