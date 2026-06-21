@@ -134,8 +134,10 @@ if __name__ == '__main__':
             print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
             exp.test(setting)
             print(
-                "skip_weight:",
-                exp.model.skip_weight.detach().cpu().view(-1)
+                torch.softmax(
+                    exp.model.skip_logits.detach().cpu(),
+                    dim=0
+                )
             )
 
             if args.do_predict:
@@ -167,7 +169,4 @@ if __name__ == '__main__':
         exp = Exp(args)  # set experiments
         print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
         exp.test(setting, test=1)
-        print(
-            exp.model.skip_weight.detach().cpu().view(-1)
-        )
         torch.cuda.empty_cache()

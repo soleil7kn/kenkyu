@@ -181,21 +181,14 @@ class Model(nn.Module):
         weights = torch.softmax(
             self.skip_logits,
             dim=0
-        )
-
-        # [M] -> [1, M, 1, 1]
-        weights = weights.view(1, M, 1, 1)
+        ).view(1, M, 1, 1)
 
         # skipごとに重み付け
         enc_out = enc_out * weights
 
-        # 時間方向を集約
-        enc_out = enc_out.mean(dim=2)
-
-        # [B, M, D] -> [B, M*D]
         enc_out = enc_out.reshape(
             B,
-            M * D
+            M * L * D
         )
 
         out = self.head(enc_out)
