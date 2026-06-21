@@ -71,12 +71,6 @@ class Model(nn.Module):
             configs.dropout
         )
 
-        self.skip_rates = [1, 2, 4]
-
-        self.multi_skip = MultiSkipEmbedding(
-            skip_rates=self.skip_rates
-)
-
         # Transformer Encoder
         self.encoder = Encoder(
             [
@@ -102,12 +96,22 @@ class Model(nn.Module):
         )
 
         # Prediction Head
+        self.skip_rates = [1, 2, 4]
+
+        self.num_skip = sum(self.skip_rates)
+
         self.max_len = max(
             (configs.seq_len + s - 1) // s
             for s in self.skip_rates
         )
 
-        self.num_skip = sum(self.skip_rates)
+        self.skip_weight = nn.Parameter(
+            torch.ones(1, self.num_skip, 1, 1)
+        )
+
+        self.multi_skip = MultiSkipEmbedding(
+            skip_rates=self.skip_rates
+        )
 
         self.head = nn.Linear(
             self.num_skip * self.max_len * configs.d_model,
@@ -172,6 +176,8 @@ class Model(nn.Module):
             L,
             D
         )
+
+        enc_out = enc_out * self.skip_weight
 
         enc_out = enc_out.reshape(
             B,
