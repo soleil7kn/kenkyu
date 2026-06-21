@@ -176,7 +176,7 @@ class Model(nn.Module):
             L,
             D
         )
-
+        """
         # skip重みを計算
         weights = torch.softmax(
             self.skip_logits,
@@ -185,7 +185,8 @@ class Model(nn.Module):
 
         # skipごとに重み付け
         enc_out = enc_out * weights
-
+        """
+        
         enc_out = enc_out.reshape(
             B,
             M * L * D
