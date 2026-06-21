@@ -4,7 +4,7 @@ model_name=iTransformer
 
 python -u run.py \
   --is_training 1 \
-  --root_path ./dataset/PEMS/ \
+  --root_path ../dataset/PEMS/ \
   --data_path PEMS08.npz \
   --model_id PEMS08_96_12 \
   --model $model_name \
@@ -24,7 +24,7 @@ python -u run.py \
 
 python -u run.py \
   --is_training 1 \
-  --root_path ./dataset/PEMS/ \
+  --root_path ../dataset/PEMS/ \
   --data_path PEMS08.npz \
   --model_id PEMS08_96_24 \
   --model $model_name \
@@ -44,7 +44,7 @@ python -u run.py \
 
 python -u run.py \
   --is_training 1 \
-  --root_path ./dataset/PEMS/ \
+  --root_path ../dataset/PEMS/ \
   --data_path PEMS08.npz \
   --model_id PEMS08_96_48 \
   --model $model_name \
@@ -66,7 +66,7 @@ python -u run.py \
 
 python -u run.py \
   --is_training 1 \
-  --root_path ./dataset/PEMS/ \
+  --root_path ../dataset/PEMS/ \
   --data_path PEMS08.npz \
   --model_id PEMS08_96_96 \
   --model $model_name \
