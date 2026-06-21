@@ -71,11 +71,6 @@ class Model(nn.Module):
             configs.dropout
         )
 
-        # Multi Skip
-        self.multi_skip = MultiSkipEmbedding(
-            skip_rates=[2, 4]
-        )
-
         # Transformer Encoder
         self.encoder = Encoder(
             [
@@ -101,8 +96,22 @@ class Model(nn.Module):
         )
 
         # Prediction Head
-        self.max_len = (configs.seq_len + 1) // 2
-        self.num_skip = 6
+        self.skip_rates = [2, 4]
+
+        self.num_skip = sum(self.skip_rates)
+
+        self.max_len = max(
+            (configs.seq_len + s - 1) // s
+            for s in self.skip_rates
+        )
+
+        #self.skip_logits = nn.Parameter(
+        #    torch.zeros(self.num_skip)
+        #)
+
+        self.multi_skip = MultiSkipEmbedding(
+            skip_rates=self.skip_rates
+        )
 
         self.head = nn.Linear(
             self.num_skip * self.max_len * configs.d_model,
@@ -135,7 +144,7 @@ class Model(nn.Module):
             enc_out
         )
 
-        print("skip_tokens :", skip_tokens.shape)
+        # print("skip_tokens :", skip_tokens.shape)
 
         # [B, M, L, D]
         B, M, L, D = skip_tokens.shape
@@ -167,6 +176,16 @@ class Model(nn.Module):
             L,
             D
         )
+        """
+        # skip重みを計算
+        weights = torch.softmax(
+            self.skip_logits,
+            dim=0
+        ).view(1, M, 1, 1)
+
+        # skipごとに重み付け
+        enc_out = enc_out * weights
+        """
 
         enc_out = enc_out.reshape(
             B,
