@@ -105,8 +105,8 @@ class Model(nn.Module):
             for s in self.skip_rates
         )
 
-        self.skip_weight = nn.Parameter(
-            torch.ones(1, self.num_skip, 1, 1)
+        self.skip_logits = nn.Parameter(
+            torch.zeros(self.num_skip)
         )
 
         self.multi_skip = MultiSkipEmbedding(
@@ -114,7 +114,7 @@ class Model(nn.Module):
         )
 
         self.head = nn.Linear(
-            self.num_skip * self.max_len * configs.d_model,
+            self.num_skip * configs.d_model,
             self.pred_len * configs.c_out
         )
 
@@ -177,11 +177,25 @@ class Model(nn.Module):
             D
         )
 
-        enc_out = enc_out * self.skip_weight
+        # skip重みを計算
+        weights = torch.softmax(
+            self.skip_logits,
+            dim=0
+        )
 
+        # [M] -> [1, M, 1, 1]
+        weights = weights.view(1, M, 1, 1)
+
+        # skipごとに重み付け
+        enc_out = enc_out * weights
+
+        # 時間方向を集約
+        enc_out = enc_out.mean(dim=2)
+
+        # [B, M, D] -> [B, M*D]
         enc_out = enc_out.reshape(
             B,
-            M * L * D
+            M * D
         )
 
         out = self.head(enc_out)
