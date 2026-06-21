@@ -114,7 +114,7 @@ class Model(nn.Module):
         )
 
         self.head = nn.Linear(
-            self.num_skip * configs.d_model,
+            self.num_skip * self.max_len * configs.d_model,
             self.pred_len * configs.c_out
         )
 
