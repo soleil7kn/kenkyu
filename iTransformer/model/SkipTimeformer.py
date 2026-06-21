@@ -96,7 +96,7 @@ class Model(nn.Module):
         )
 
         # Prediction Head
-        self.skip_rates = [2, 4]
+        self.skip_rates = [1, 2, 4, 8]
 
         self.num_skip = sum(self.skip_rates)
 
@@ -104,10 +104,12 @@ class Model(nn.Module):
             (configs.seq_len + s - 1) // s
             for s in self.skip_rates
         )
-
+        
+        """
         self.skip_logits = nn.Parameter(
             torch.zeros(self.num_skip)
         )
+        """
 
         self.multi_skip = MultiSkipEmbedding(
             skip_rates=self.skip_rates
@@ -177,6 +179,7 @@ class Model(nn.Module):
             D
         )
         
+        """
         # skip重みを計算
         weights = torch.softmax(
             self.skip_logits,
@@ -185,6 +188,7 @@ class Model(nn.Module):
 
         # skipごとに重み付け
         enc_out = enc_out * weights
+        """
         
         enc_out = enc_out.reshape(
             B,
