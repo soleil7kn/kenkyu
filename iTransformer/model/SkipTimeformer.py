@@ -105,9 +105,9 @@ class Model(nn.Module):
             for s in self.skip_rates
         )
 
-        #self.skip_logits = nn.Parameter(
-        #    torch.zeros(self.num_skip)
-        #)
+        self.skip_logits = nn.Parameter(
+            torch.zeros(self.num_skip)
+        )
 
         self.multi_skip = MultiSkipEmbedding(
             skip_rates=self.skip_rates
