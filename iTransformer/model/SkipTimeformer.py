@@ -344,7 +344,7 @@ class Model(nn.Module):
             # いきなりSTIFを強く入れると性能が崩れる可能性があるため、
             # 小さいゲートから始める
             self.stif_gate = nn.Parameter(
-                torch.tensor(-2.0)
+                torch.tensor(0.0)
             )
 
         # --------------------------------
@@ -470,7 +470,7 @@ class Model(nn.Module):
             # gateは初期値 sigmoid(-2.0) ≒ 0.119
             # つまり最初はWeighted MSTに近く、
             # 学習が進むとSTIFの寄与を増やせる
-            gate = torch.sigmoid(self.stif_gate)
+            gate = torch.tanh(self.stif_gate)
 
             enc_out = enc_out + gate * (stif_out - enc_out)
 
