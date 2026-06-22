@@ -7,6 +7,35 @@ from layers.SelfAttention_Family import FullAttention, AttentionLayer
 from layers.Embed import DataEmbedding
 
 
+def parse_skip_rates(skip_rates):
+    """
+    skip_ratesを安全にlist[int]へ変換する関数。
+    例:
+        [2]        -> [2]
+        "2"        -> [2]
+        "1,2,4"    -> [1, 2, 4]
+        "[1,2,4]"  -> [1, 2, 4]
+    """
+
+    if isinstance(skip_rates, list):
+        return [int(s) for s in skip_rates]
+
+    if isinstance(skip_rates, tuple):
+        return [int(s) for s in skip_rates]
+
+    if isinstance(skip_rates, int):
+        return [skip_rates]
+
+    if isinstance(skip_rates, str):
+        skip_rates = skip_rates.replace("[", "")
+        skip_rates = skip_rates.replace("]", "")
+        skip_rates = skip_rates.replace(" ", "")
+
+        return [int(s) for s in skip_rates.split(",") if s != ""]
+
+    raise ValueError(f"Unsupported skip_rates type: {type(skip_rates)}")
+
+
 class MultiSkipEmbedding(nn.Module):
 
     def __init__(self, skip_rates=[2]):
@@ -30,7 +59,10 @@ class MultiSkipEmbedding(nn.Module):
 
             for offset in range(skip):
 
-                seq = x[:, offset::skip, :]   # [B, L_i, D]
+                # 例: skip=2なら
+                # offset=0: x[:, 0::2, :]
+                # offset=1: x[:, 1::2, :]
+                seq = x[:, offset::skip, :]
                 valid_len = seq.shape[1]
 
                 mask = torch.ones(
@@ -74,6 +106,70 @@ class MultiSkipEmbedding(nn.Module):
         return z, mask
 
 
+class WeightedMSTPooling(nn.Module):
+    """
+    Weighted Multi-Skip Token Pooling
+
+    Encoder後のskip表現 [B, M, L, D] に対して、
+    1. padding部分を除外してmean pooling
+    2. skip系列ごとにlearnable weightをかける
+    """
+
+    def __init__(self, num_skip, d_model, use_weight=True):
+        super().__init__()
+
+        self.num_skip = num_skip
+        self.d_model = d_model
+        self.use_weight = use_weight
+
+        if self.use_weight:
+            self.skip_logits = nn.Parameter(
+                torch.zeros(num_skip)
+            )
+        else:
+            self.register_buffer(
+                "skip_logits",
+                torch.zeros(num_skip)
+            )
+
+    def forward(self, x, mask):
+
+        # x   : [B, M, L, D]
+        # mask: [B, M, L]
+
+        B, M, L, D = x.shape
+
+        mask_float = mask.unsqueeze(-1).float()
+        # [B, M, L, 1]
+
+        # padding部分を除外
+        x = x * mask_float
+
+        # skipごとにmean pooling
+        pooled = x.sum(dim=2) / mask_float.sum(dim=2).clamp_min(1.0)
+        # pooled: [B, M, D]
+
+        if self.use_weight:
+            weights = torch.softmax(
+                self.skip_logits,
+                dim=0
+            )
+        else:
+            weights = torch.ones(
+                M,
+                device=x.device,
+                dtype=x.dtype
+            ) / M
+
+        # weights: [M]
+        pooled = pooled * weights.view(1, M, 1)
+
+        # [B, M, D] -> [B, M*D]
+        pooled = pooled.reshape(B, M * D)
+
+        return pooled, weights
+
+
 class Model(nn.Module):
 
     def __init__(self, configs):
@@ -88,10 +184,41 @@ class Model(nn.Module):
         self.c_out = configs.c_out
 
         # --------------------------------
+        # Skip setting
+        # --------------------------------
+        # configsにskip_ratesがなければ[2]を使う
+        self.skip_rates = parse_skip_rates(
+            getattr(configs, "skip_rates", [2])
+        )
+
+        # 例:
+        # skip_rates=[2]       -> M=2
+        # skip_rates=[1,2]     -> M=3
+        # skip_rates=[1,2,4]   -> M=7
+        self.num_skip = sum(self.skip_rates)
+
+        # weightを使うかどうか
+        # ablation用にFalseにもできる
+        self.use_skip_weight = getattr(
+            configs,
+            "use_skip_weight",
+            True
+        )
+
+        # --------------------------------
+        # Normalization
+        # --------------------------------
+        # 純粋にSkipTimeformer系のアイデアだけを見たい場合はFalse推奨。
+        # 以前の良化結果を再現したい場合はTrueでもよい。
+        self.use_norm = getattr(
+            configs,
+            "use_norm",
+            False
+        )
+
+        # --------------------------------
         # Embedding
         # --------------------------------
-        # iTransformerのDataEmbedding_invertedではなく、
-        # 通常の時系列方向Embeddingを使う
         self.enc_embedding = DataEmbedding(
             configs.enc_in,
             configs.d_model,
@@ -127,28 +254,24 @@ class Model(nn.Module):
         )
 
         # --------------------------------
-        # Multi-Skip Setting
+        # Multi-Skip Token
         # --------------------------------
-        self.skip_rates = [2]
-
-        # step=[2] の場合、
-        # offset=0 と offset=1 の2系列
-        self.num_skip = sum(self.skip_rates)
-
         self.multi_skip = MultiSkipEmbedding(
             skip_rates=self.skip_rates
         )
 
-        # skipごとの学習可能重み
-        self.skip_logits = nn.Parameter(
-            torch.zeros(self.num_skip)
+        # --------------------------------
+        # Weighted MST Pooling
+        # --------------------------------
+        self.weighted_pooling = WeightedMSTPooling(
+            num_skip=self.num_skip,
+            d_model=configs.d_model,
+            use_weight=self.use_skip_weight
         )
 
         # --------------------------------
         # Prediction Head
         # --------------------------------
-        # masked mean pooling後は [B, M, D]
-        # それを [B, M*D] にして予測する
         self.head = nn.Linear(
             self.num_skip * configs.d_model,
             self.pred_len * configs.c_out
@@ -163,9 +286,31 @@ class Model(nn.Module):
     ):
 
         # --------------------------------
+        # Optional Normalization
+        # --------------------------------
+        if self.use_norm:
+
+            means = x_enc.mean(
+                dim=1,
+                keepdim=True
+            ).detach()
+
+            x_enc = x_enc - means
+
+            stdev = torch.sqrt(
+                torch.var(
+                    x_enc,
+                    dim=1,
+                    keepdim=True,
+                    unbiased=False
+                ) + 1e-5
+            )
+
+            x_enc = x_enc / stdev
+
+        # --------------------------------
         # Embedding
         # --------------------------------
-        # use_normは入れない
         enc_out = self.enc_embedding(
             x_enc,
             x_mark_enc
@@ -185,7 +330,7 @@ class Model(nn.Module):
 
         B, M, L, D = skip_tokens.shape
 
-        # padding部分を0にする
+        # padding部分を明示的に0にする
         skip_tokens = skip_tokens * skip_mask.unsqueeze(-1).float()
 
         # --------------------------------
@@ -210,7 +355,7 @@ class Model(nn.Module):
         # enc_out: [B*M, L, D]
 
         # --------------------------------
-        # Reshape
+        # Reshape back
         # --------------------------------
         enc_out = enc_out.reshape(
             B,
@@ -226,32 +371,15 @@ class Model(nn.Module):
         )
 
         # --------------------------------
-        # Masked Mean Pooling
+        # Weighted MST Pooling
         # --------------------------------
-        mask_float = skip_mask.unsqueeze(-1).float()
-        # [B, M, L, 1]
-
-        enc_out = enc_out * mask_float
-
-        pooled = enc_out.sum(dim=2) / mask_float.sum(dim=2).clamp_min(1.0)
-
-        # pooled: [B, M, D]
-
-        # --------------------------------
-        # Learnable Skip Weight
-        # --------------------------------
-        weights = torch.softmax(
-            self.skip_logits,
-            dim=0
-        ).view(1, M, 1)
-
-        pooled = pooled * weights
-
-        # [B, M, D] -> [B, M*D]
-        pooled = pooled.reshape(
-            B,
-            M * D
+        pooled, weights = self.weighted_pooling(
+            enc_out,
+            skip_mask
         )
+
+        # pooled: [B, M*D]
+        # weights: [M]
 
         # --------------------------------
         # Prediction
@@ -264,7 +392,24 @@ class Model(nn.Module):
             self.c_out
         )
 
-        return out, attns
+        # --------------------------------
+        # Optional De-normalization
+        # --------------------------------
+        if self.use_norm:
+
+            out = out * (
+                stdev[:, 0, :self.c_out]
+                .unsqueeze(1)
+                .repeat(1, self.pred_len, 1)
+            )
+
+            out = out + (
+                means[:, 0, :self.c_out]
+                .unsqueeze(1)
+                .repeat(1, self.pred_len, 1)
+            )
+
+        return out, attns, weights
 
     def forward(
         self,
@@ -275,14 +420,32 @@ class Model(nn.Module):
         mask=None
     ):
 
-        dec_out, attns = self.forecast(
+        dec_out, attns, weights = self.forecast(
             x_enc,
             x_mark_enc,
             x_dec,
             x_mark_dec
         )
 
+        # 学習コード側がoutput_attention=Trueを想定している場合
         if self.output_attention:
             return dec_out[:, -self.pred_len:, :], attns
-        else:
-            return dec_out[:, -self.pred_len:, :]
+
+        return dec_out[:, -self.pred_len:, :]
+
+    def get_skip_weights(self):
+        """
+        学習後にskip weightを確認する用。
+        例:
+            print(model.get_skip_weights())
+        """
+
+        if self.use_skip_weight:
+            return torch.softmax(
+                self.weighted_pooling.skip_logits.detach(),
+                dim=0
+            )
+
+        return torch.ones(
+            self.num_skip
+        ) / self.num_skip
