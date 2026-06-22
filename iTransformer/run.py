@@ -204,6 +204,18 @@ if __name__ == '__main__':
                 print("stif gate after tanh:")
                 print(gate)
 
+            if hasattr(model_for_weight, "sticln_gate"):
+
+                raw_sticln_gate = model_for_weight.sticln_gate.detach().cpu()
+
+                sticln_gate = torch.tanh(raw_sticln_gate)
+
+                print("raw sticln gate parameter:")
+                print(raw_sticln_gate)
+
+                print("sticln gate after tanh:")
+                print(sticln_gate)
+
             else:
                 print("This model does not have weighted_pooling.")
 
