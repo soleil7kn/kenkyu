@@ -87,6 +87,35 @@ if __name__ == '__main__':
     parser.add_argument('--partial_start_index', type=int, default=0, help='the start index of variates for partial training, '
                                                                            'you can select [partial_start_index, min(enc_in + partial_start_index, N)]')
 
+    # 追加したparser
+    parser.add_argument(
+        '--skip_rates',
+        type=str,
+        default='2',
+        help='skip rates for Multi-Skip Token, e.g. 2 or 1,2,4'
+    )
+
+    parser.add_argument(
+        '--use_skip_weight',
+        type=int,
+        default=1,
+        help='whether to use learnable skip weights'
+    )
+
+    parser.add_argument(
+        '--use_skip_interaction',
+        type=int,
+        default=1,
+        help='whether to use Skip-Time Interaction'
+    )
+
+    parser.add_argument(
+        '--skip_interaction_layers',
+        type=int,
+        default=1,
+        help='number of Skip-Time Interaction layers'
+    )
+
     args = parser.parse_args()
     args.use_gpu = True if torch.cuda.is_available() and args.use_gpu else False
 
@@ -155,6 +184,13 @@ if __name__ == '__main__':
                                 f"skip={skip}, offset={offset}: {weights[idx].item():.4f}"
                             )
                             idx += 1
+
+            if hasattr(model_for_weight, "stif_gate"):
+                gate = torch.sigmoid(
+                    model_for_weight.stif_gate.detach().cpu()
+                )
+                print("stif gate:")
+                print(gate)
 
             else:
                 print("This model does not have weighted_pooling.")
