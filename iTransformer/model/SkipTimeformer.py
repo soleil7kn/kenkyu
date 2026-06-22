@@ -247,6 +247,111 @@ class SkipTimeInteraction(nn.Module):
         return x_inter, attns
 
 
+class STICLN(nn.Module):
+    """
+    Simplified Skip-Time Interaction Conditional Layer Normalization
+
+    h:
+        original sequence representation
+        [B, T, D]
+
+    s:
+        skip-time representation
+        [B, M, L, D]
+
+    skip_mask:
+        valid mask for skip tokens
+        [B, M, L]
+    """
+
+    def __init__(self, d_model, dropout=0.1):
+        super().__init__()
+
+        # affine=False にして、gamma/betaをskip情報から生成する
+        self.norm = nn.LayerNorm(
+            d_model,
+            elementwise_affine=False
+        )
+
+        self.cond_proj = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model, 2 * d_model)
+        )
+
+        # 初期状態でdelta_gamma, delta_betaが0になるようにする
+        # これにより、STICLNがいきなり強く効きすぎるのを防ぐ
+        nn.init.zeros_(self.cond_proj[-1].weight)
+        nn.init.zeros_(self.cond_proj[-1].bias)
+
+        self.base_gamma = nn.Parameter(
+            torch.ones(d_model)
+        )
+
+        self.base_beta = nn.Parameter(
+            torch.zeros(d_model)
+        )
+
+    def forward(self, h, s, skip_mask):
+
+        # h: [B, T, D]
+        # s: [B, M, L, D]
+        # skip_mask: [B, M, L]
+
+        B, T, D = h.shape
+
+        mask_float = skip_mask.unsqueeze(-1).float()
+        # [B, M, L, 1]
+
+        # skip情報を1つの条件ベクトルに集約
+        cond = (s * mask_float).sum(dim=(1, 2)) / mask_float.sum(dim=(1, 2)).clamp_min(1.0)
+        # cond: [B, D]
+
+        gamma_beta = self.cond_proj(cond)
+        # [B, 2D]
+
+        delta_gamma, delta_beta = gamma_beta.chunk(2, dim=-1)
+        # [B, D], [B, D]
+
+        gamma = self.base_gamma.view(1, 1, D) + delta_gamma.unsqueeze(1)
+        beta = self.base_beta.view(1, 1, D) + delta_beta.unsqueeze(1)
+
+        h_norm = self.norm(h)
+
+        out = gamma * h_norm + beta
+
+        return out
+    
+
+def build_encoder(configs, num_layers=None):
+
+    if num_layers is None:
+        num_layers = configs.e_layers
+
+    return Encoder(
+        [
+            EncoderLayer(
+                AttentionLayer(
+                    FullAttention(
+                        False,
+                        configs.factor,
+                        attention_dropout=configs.dropout,
+                        output_attention=configs.output_attention
+                    ),
+                    configs.d_model,
+                    configs.n_heads
+                ),
+                configs.d_model,
+                configs.d_ff,
+                dropout=configs.dropout,
+                activation=configs.activation
+            )
+            for _ in range(num_layers)
+        ],
+        norm_layer=nn.LayerNorm(configs.d_model)
+    )    
+
 class Model(nn.Module):
 
     def __init__(self, configs):
@@ -302,28 +407,36 @@ class Model(nn.Module):
         # --------------------------------
         # Temporal Encoder
         # --------------------------------
-        self.encoder = Encoder(
-            [
-                EncoderLayer(
-                    AttentionLayer(
-                        FullAttention(
-                            False,
-                            configs.factor,
-                            attention_dropout=configs.dropout,
-                            output_attention=configs.output_attention
-                        ),
-                        configs.d_model,
-                        configs.n_heads
-                    ),
-                    configs.d_model,
-                    configs.d_ff,
-                    dropout=configs.dropout,
-                    activation=configs.activation
-                )
-                for _ in range(configs.e_layers)
-            ],
-            norm_layer=nn.LayerNorm(configs.d_model)
+        # skip tokenを時間方向に処理するEncoder
+        self.encoder = build_encoder(
+            configs,
+            num_layers=configs.e_layers
         )
+
+        # --------------------------------
+        # STICLN setting
+        # --------------------------------
+        self.use_sticln = bool(
+            getattr(configs, "use_sticln", 0)
+        )
+
+        if self.use_sticln:
+
+            # original sequence path用Encoder
+            self.main_encoder = build_encoder(
+                configs,
+                num_layers=configs.e_layers
+            )
+
+            self.sticln = STICLN(
+                d_model=configs.d_model,
+                dropout=configs.dropout
+            )
+
+            # tanh(0)=0なので、初期状態ではSTICLNなしと同じ
+            self.sticln_gate = nn.Parameter(
+                torch.tensor(0.0)
+            )
 
         # --------------------------------
         # Multi-Skip Token
@@ -359,8 +472,13 @@ class Model(nn.Module):
         # --------------------------------
         # Prediction Head
         # --------------------------------
+        if self.use_sticln:
+            head_in_dim = (self.num_skip + 1) * configs.d_model
+        else:
+            head_in_dim = self.num_skip * configs.d_model
+
         self.head = nn.Linear(
-            self.num_skip * configs.d_model,
+            head_in_dim,
             self.pred_len * configs.c_out
         )
 
@@ -398,18 +516,32 @@ class Model(nn.Module):
         # --------------------------------
         # Embedding
         # --------------------------------
-        enc_out = self.enc_embedding(
+        enc_embed = self.enc_embedding(
             x_enc,
             x_mark_enc
         )
 
         # enc_out: [B, T, D]
 
+
+        # --------------------------------
+        # Original sequence path
+        # --------------------------------
+        main_out = None
+        main_attns = None
+
+        if self.use_sticln:
+
+            main_out, main_attns = self.main_encoder(
+                enc_embed,
+                attn_mask=None
+            )
+            
         # --------------------------------
         # Multi-Skip Token
         # --------------------------------
         skip_tokens, skip_mask = self.multi_skip(
-            enc_out
+            enc_embed
         )
 
         # skip_tokens: [B, M, L, D]
@@ -477,6 +609,23 @@ class Model(nn.Module):
             enc_out = enc_out * skip_mask.unsqueeze(-1).float()
 
         # --------------------------------
+        # STICLN
+        # --------------------------------
+        if self.use_sticln:
+
+            sticln_out = self.sticln(
+                main_out,
+                enc_out,
+                skip_mask
+            )
+
+            sticln_gate = torch.tanh(
+                self.sticln_gate
+            )
+
+            main_out = main_out + sticln_gate * (sticln_out - main_out)
+
+        # --------------------------------
         # Weighted MST Pooling
         # --------------------------------
         pooled, weights = self.weighted_pooling(
@@ -486,6 +635,18 @@ class Model(nn.Module):
 
         # pooled: [B, M*D]
         # weights: [M]
+
+        # --------------------------------
+        # Concat original path representation
+        # --------------------------------
+        if self.use_sticln:
+
+            main_pooled = main_out.mean(dim=1)
+
+            pooled = torch.cat(
+                [main_pooled, pooled],
+                dim=-1
+            )
 
         # --------------------------------
         # Prediction
