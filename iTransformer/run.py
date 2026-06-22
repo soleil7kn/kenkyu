@@ -216,6 +216,17 @@ if __name__ == '__main__':
                 print("sticln gate after tanh:")
                 print(sticln_gate)
 
+            if hasattr(model_for_weight, "main_gate"):
+
+                raw_main_gate = model_for_weight.main_gate.detach().cpu()
+                main_gate = torch.tanh(raw_main_gate)
+
+                print("raw main gate parameter:")
+                print(raw_main_gate)
+
+                print("main gate after tanh:")
+                print(main_gate)
+
             else:
                 print("This model does not have weighted_pooling.")
 

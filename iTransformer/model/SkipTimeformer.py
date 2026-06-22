@@ -379,7 +379,7 @@ class Model(nn.Module):
         )
 
         self.use_skip_interaction = bool(
-            getattr(configs, "use_skip_interaction", 1)
+            getattr(configs, "use_skip_interaction", 0)
         )
 
         self.skip_interaction_layers = int(
@@ -438,6 +438,17 @@ class Model(nn.Module):
                 torch.tensor(0.0)
             )
 
+            # original pathをskip表現の次元に合わせる
+            self.main_fusion = nn.Linear(
+                configs.d_model,
+                self.num_skip * configs.d_model
+            )
+
+            # tanh(0)=0なので、初期状態ではoriginal pathを使わない
+            self.main_gate = nn.Parameter(
+                torch.tensor(0.0)
+            )
+
         # --------------------------------
         # Multi-Skip Token
         # --------------------------------
@@ -472,13 +483,10 @@ class Model(nn.Module):
         # --------------------------------
         # Prediction Head
         # --------------------------------
-        if self.use_sticln:
-            head_in_dim = (self.num_skip + 1) * configs.d_model
-        else:
-            head_in_dim = self.num_skip * configs.d_model
+        head_in_dim = self.num_skip * configs.d_model
 
         self.head = nn.Linear(
-            head_in_dim,
+            self.num_skip * configs.d_model,
             self.pred_len * configs.c_out
         )
 
@@ -599,7 +607,7 @@ class Model(nn.Module):
                 skip_mask
             )
 
-            # gateは初期値 sigmoid(-2.0) ≒ 0.119
+            # tanh(0)=0 なので、初期状態ではSTIFなしと同じ
             # つまり最初はWeighted MSTに近く、
             # 学習が進むとSTIFの寄与を増やせる
             gate = torch.tanh(self.stif_gate)
@@ -637,16 +645,19 @@ class Model(nn.Module):
         # weights: [M]
 
         # --------------------------------
-        # Concat original path representation
+        # Gated fusion with original path
         # --------------------------------
         if self.use_sticln:
 
             main_pooled = main_out.mean(dim=1)
+            # [B, D]
 
-            pooled = torch.cat(
-                [main_pooled, pooled],
-                dim=-1
-            )
+            main_pooled = self.main_fusion(main_pooled)
+            # [B, M*D]
+
+            main_gate = torch.tanh(self.main_gate)
+
+            pooled = pooled + main_gate * main_pooled
 
         # --------------------------------
         # Prediction
@@ -733,8 +744,27 @@ class Model(nn.Module):
     def get_stif_gate(self):
 
         if self.use_skip_interaction:
-            return torch.sigmoid(
+            return torch.tanh(
                 self.stif_gate.detach()
+            )
+
+        return None
+    
+    def get_sticln_gate(self):
+
+        if self.use_sticln:
+            return torch.tanh(
+                self.sticln_gate.detach()
+            )
+
+        return None
+
+
+    def get_main_gate(self):
+
+        if self.use_sticln:
+            return torch.tanh(
+                self.main_gate.detach()
             )
 
         return None
