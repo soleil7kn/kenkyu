@@ -28,13 +28,25 @@ def parse_skip_rates(skip_rates):
 
 
 class MultiSkipEmbedding(nn.Module):
+    """
+    Multi-skip Sequence Token Embedding
+
+    Input:
+        x: [B, T, D]
+
+    Output:
+        z:    [B, M, L, D]
+        mask: [B, M, L]
+
+    M = sum(skip_rates)
+    L = max subsequence length after padding
+    """
 
     def __init__(self, skip_rates=[2]):
         super().__init__()
         self.skip_rates = skip_rates
 
     def forward(self, x):
-        # x: [B, T, D]
         B, T, D = x.shape
 
         outputs = []
@@ -46,7 +58,6 @@ class MultiSkipEmbedding(nn.Module):
         )
 
         for skip in self.skip_rates:
-
             for offset in range(skip):
 
                 seq = x[:, offset::skip, :]
@@ -60,7 +71,6 @@ class MultiSkipEmbedding(nn.Module):
                 )
 
                 if valid_len < max_len:
-
                     pad_len = max_len - valid_len
 
                     pad_seq = torch.zeros(
@@ -84,167 +94,10 @@ class MultiSkipEmbedding(nn.Module):
                 outputs.append(seq)
                 masks.append(mask)
 
-        # z: [B, M, L, D]
-        z = torch.stack(outputs, dim=1)
-
-        # mask: [B, M, L]
-        mask = torch.stack(masks, dim=1)
+        z = torch.stack(outputs, dim=1)       # [B, M, L, D]
+        mask = torch.stack(masks, dim=1)      # [B, M, L]
 
         return z, mask
-
-
-class WeightedMSTPooling(nn.Module):
-
-    def __init__(self, num_skip, d_model, use_weight=True):
-        super().__init__()
-
-        self.num_skip = num_skip
-        self.d_model = d_model
-        self.use_weight = use_weight
-
-        if self.use_weight:
-            self.skip_logits = nn.Parameter(
-                torch.zeros(num_skip)
-            )
-        else:
-            self.register_buffer(
-                "skip_logits",
-                torch.zeros(num_skip)
-            )
-
-    def forward(self, x, mask):
-        # x   : [B, M, L, D]
-        # mask: [B, M, L]
-
-        B, M, L, D = x.shape
-
-        mask_float = mask.unsqueeze(-1).float()
-        # [B, M, L, 1]
-
-        x = x * mask_float
-
-        pooled = x.sum(dim=2) / mask_float.sum(dim=2).clamp_min(1.0)
-        # pooled: [B, M, D]
-
-        if self.use_weight:
-            weights = torch.softmax(
-                self.skip_logits,
-                dim=0
-            )
-        else:
-            weights = torch.ones(
-                M,
-                device=x.device,
-                dtype=x.dtype
-            ) / M
-
-        pooled = pooled * weights.view(1, M, 1)
-
-        # [B, M, D] -> [B, M*D]
-        pooled = pooled.reshape(B, M * D)
-
-        return pooled, weights
-
-
-class SkipTimeInteraction(nn.Module):
-    """
-    Skip-Time Interaction
-
-    入力:
-        x   : [B, M, L, D]
-        mask: [B, M, L]
-
-    処理:
-        各時刻位置 L ごとに、M方向へAttentionする。
-        つまり、skip系列同士を相互作用させる。
-
-    変形:
-        [B, M, L, D]
-        -> [B, L, M, D]
-        -> [B*L, M, D]
-        -> Encoder
-        -> [B, M, L, D]
-    """
-
-    def __init__(self, configs, num_layers=1):
-        super().__init__()
-
-        self.interaction_encoder = Encoder(
-            [
-                EncoderLayer(
-                    AttentionLayer(
-                        FullAttention(
-                            False,
-                            configs.factor,
-                            attention_dropout=configs.dropout,
-                            output_attention=configs.output_attention
-                        ),
-                        configs.d_model,
-                        configs.n_heads
-                    ),
-                    configs.d_model,
-                    configs.d_ff,
-                    dropout=configs.dropout,
-                    activation=configs.activation
-                )
-                for _ in range(num_layers)
-            ],
-            norm_layer=nn.LayerNorm(configs.d_model)
-        )
-
-    def forward(self, x, mask):
-
-        # x   : [B, M, L, D]
-        # mask: [B, M, L]
-
-        B, M, L, D = x.shape
-
-        mask_float = mask.unsqueeze(-1).float()
-        x = x * mask_float
-
-        # [B, M, L, D] -> [B, L, M, D]
-        x_inter = x.permute(0, 2, 1, 3).contiguous()
-
-        # [B, M, L] -> [B, L, M]
-        mask_inter = mask.permute(0, 2, 1).contiguous()
-
-        # [B, L, M, D] -> [B*L, M, D]
-        x_inter = x_inter.reshape(
-            B * L,
-            M,
-            D
-        )
-
-        # [B, L, M] -> [B*L, M]
-        mask_inter = mask_inter.reshape(
-            B * L,
-            M
-        )
-
-        # padding部分を0にする
-        x_inter = x_inter * mask_inter.unsqueeze(-1).float()
-
-        # skip方向のAttention
-        x_inter, attns = self.interaction_encoder(
-            x_inter,
-            attn_mask=None
-        )
-
-        # padding部分を再度0にする
-        x_inter = x_inter * mask_inter.unsqueeze(-1).float()
-
-        # [B*L, M, D] -> [B, L, M, D]
-        x_inter = x_inter.reshape(
-            B,
-            L,
-            M,
-            D
-        )
-
-        # [B, L, M, D] -> [B, M, L, D]
-        x_inter = x_inter.permute(0, 2, 1, 3).contiguous()
-
-        return x_inter, attns
 
 
 class STICLN(nn.Module):
@@ -256,18 +109,21 @@ class STICLN(nn.Module):
         [B, T, D]
 
     s:
-        skip-time representation
+        skip-time representation after MSA
         [B, M, L, D]
 
     skip_mask:
         valid mask for skip tokens
         [B, M, L]
+
+    skip_weights:
+        optional learnable skip weights
+        [M]
     """
 
     def __init__(self, d_model, dropout=0.1):
         super().__init__()
 
-        # affine=False にして、gamma/betaをskip情報から生成する
         self.norm = nn.LayerNorm(
             d_model,
             elementwise_affine=False
@@ -280,8 +136,8 @@ class STICLN(nn.Module):
             nn.Linear(d_model, 2 * d_model)
         )
 
-        # 初期状態でdelta_gamma, delta_betaが0になるようにする
-        # これにより、STICLNがいきなり強く効きすぎるのを防ぐ
+        # Stable initialization:
+        # delta_gamma = 0, delta_beta = 0 at the beginning.
         nn.init.zeros_(self.cond_proj[-1].weight)
         nn.init.zeros_(self.cond_proj[-1].bias)
 
@@ -293,24 +149,28 @@ class STICLN(nn.Module):
             torch.zeros(d_model)
         )
 
-    def forward(self, h, s, skip_mask):
-
+    def forward(self, h, s, skip_mask, skip_weights=None):
         # h: [B, T, D]
         # s: [B, M, L, D]
         # skip_mask: [B, M, L]
+        # skip_weights: [M] or None
 
         B, T, D = h.shape
 
         mask_float = skip_mask.unsqueeze(-1).float()
         # [B, M, L, 1]
 
-        # skip情報を1つの条件ベクトルに集約
-        cond = (s * mask_float).sum(dim=(1, 2)) / mask_float.sum(dim=(1, 2)).clamp_min(1.0)
+        if skip_weights is not None:
+            weight = skip_weights.view(1, -1, 1, 1)
+            weighted_mask = mask_float * weight
+        else:
+            weighted_mask = mask_float
+
+        # Aggregate multi-skip information into one condition vector.
+        cond = (s * weighted_mask).sum(dim=(1, 2)) / weighted_mask.sum(dim=(1, 2)).clamp_min(1.0)
         # cond: [B, D]
 
         gamma_beta = self.cond_proj(cond)
-        # [B, 2D]
-
         delta_gamma, delta_beta = gamma_beta.chunk(2, dim=-1)
         # [B, D], [B, D]
 
@@ -322,12 +182,13 @@ class STICLN(nn.Module):
         out = gamma * h_norm + beta
 
         return out
-    
+
 
 def build_encoder(configs, num_layers=None):
-
     if num_layers is None:
         num_layers = configs.e_layers
+
+    num_layers = max(1, int(num_layers))
 
     return Encoder(
         [
@@ -350,12 +211,30 @@ def build_encoder(configs, num_layers=None):
             for _ in range(num_layers)
         ],
         norm_layer=nn.LayerNorm(configs.d_model)
-    )    
+    )
+
 
 class Model(nn.Module):
+    """
+    Skip-Timeformer-like architecture based on Figure 3.
+
+    Main flow:
+        Input
+        -> Embedding
+        -> Multi-skip Sequence Token Embedding
+        -> MSA over all multi-skip tokens
+        -> STICLN(h_prev, skip_out, skip_mask)
+        -> Dropout
+        -> Projection
+        -> Output
+
+    Note:
+        WeightedMSTPooling is removed.
+        Learnable skip weights are preserved as an extension and are used
+        when constructing the STICLN condition vector.
+    """
 
     def __init__(self, configs):
-
         super().__init__()
 
         self.seq_len = configs.seq_len
@@ -378,16 +257,18 @@ class Model(nn.Module):
             getattr(configs, "use_skip_weight", 1)
         )
 
-        self.use_skip_interaction = bool(
-            getattr(configs, "use_skip_interaction", 0)
-        )
-
-        self.skip_interaction_layers = int(
-            getattr(configs, "skip_interaction_layers", 1)
-        )
+        if self.use_skip_weight:
+            self.skip_logits = nn.Parameter(
+                torch.zeros(self.num_skip)
+            )
+        else:
+            self.register_buffer(
+                "skip_logits",
+                torch.zeros(self.num_skip)
+            )
 
         # --------------------------------
-        # Normalization
+        # Optional input normalization
         # --------------------------------
         self.use_norm = bool(
             getattr(configs, "use_norm", 1)
@@ -405,90 +286,80 @@ class Model(nn.Module):
         )
 
         # --------------------------------
-        # Temporal Encoder
-        # --------------------------------
-        # skip tokenを時間方向に処理するEncoder
-        self.encoder = build_encoder(
-            configs,
-            num_layers=configs.e_layers
-        )
-
-        # --------------------------------
-        # STICLN setting
-        # --------------------------------
-        self.use_sticln = bool(
-            getattr(configs, "use_sticln", 0)
-        )
-
-        if self.use_sticln:
-
-            # original sequence path用Encoder
-            self.main_encoder = build_encoder(
-                configs,
-                num_layers=configs.e_layers
-            )
-
-            self.sticln = STICLN(
-                d_model=configs.d_model,
-                dropout=configs.dropout
-            )
-
-            # tanh(0)=0なので、初期状態ではSTICLNなしと同じ
-            self.sticln_gate = nn.Parameter(
-                torch.tensor(0.0)
-            )
-
-            # original pathをskip表現の次元に合わせる
-            self.main_fusion = nn.Linear(
-                configs.d_model,
-                self.num_skip * configs.d_model
-            )
-
-            # tanh(0)=0なので、初期状態ではoriginal pathを使わない
-            self.main_gate = nn.Parameter(
-                torch.tensor(0.0)
-            )
-
-        # --------------------------------
-        # Multi-Skip Token
+        # Multi-skip token embedding
         # --------------------------------
         self.multi_skip = MultiSkipEmbedding(
             skip_rates=self.skip_rates
         )
 
         # --------------------------------
-        # Skip-Time Interaction
+        # MSA over all multi-skip tokens
         # --------------------------------
-        if self.use_skip_interaction:
-            self.skip_interaction = SkipTimeInteraction(
+        # This corresponds to applying MSA to multi-skip sequence token embedding.
+        # [B, M, L, D] -> [B, M*L, D] -> MSA -> [B, M, L, D]
+        skip_msa_layers = int(
+            getattr(
                 configs,
-                num_layers=self.skip_interaction_layers
+                "skip_msa_layers",
+                getattr(configs, "skip_interaction_layers", configs.e_layers)
             )
+        )
 
-            # いきなりSTIFを強く入れると性能が崩れる可能性があるため、
-            # 小さいゲートから始める
-            self.stif_gate = nn.Parameter(
-                torch.tensor(0.0)
-            )
+        if skip_msa_layers <= 0:
+            skip_msa_layers = configs.e_layers
+
+        self.skip_msa = build_encoder(
+            configs,
+            num_layers=skip_msa_layers
+        )
 
         # --------------------------------
-        # Weighted MST Pooling
+        # STICLN
         # --------------------------------
-        self.weighted_pooling = WeightedMSTPooling(
-            num_skip=self.num_skip,
+        self.sticln = STICLN(
             d_model=configs.d_model,
-            use_weight=self.use_skip_weight
+            dropout=configs.dropout
         )
 
         # --------------------------------
-        # Prediction Head
+        # Dropout -> Projection
         # --------------------------------
-        head_in_dim = self.num_skip * configs.d_model
+        self.dropout_layer = nn.Dropout(configs.dropout)
 
-        self.head = nn.Linear(
-            self.num_skip * configs.d_model,
-            self.pred_len * configs.c_out
+        # Project the original sequence length to prediction length.
+        self.time_projection = nn.Linear(
+            configs.seq_len,
+            configs.pred_len
         )
+
+        # Project latent dimension to output variables.
+        self.output_projection = nn.Linear(
+            configs.d_model,
+            configs.c_out
+        )
+
+    def get_skip_weights(self):
+        if self.use_skip_weight:
+            return torch.softmax(
+                self.skip_logits.detach(),
+                dim=0
+            )
+
+        return torch.ones(
+            self.num_skip,
+            device=self.skip_logits.device
+        ) / self.num_skip
+
+    def print_skip_weights(self):
+        weights = self.get_skip_weights().detach().cpu()
+
+        idx = 0
+        for skip in self.skip_rates:
+            for offset in range(skip):
+                print(
+                    f"skip={skip}, offset={offset}: {weights[idx].item():.4f}"
+                )
+                idx += 1
 
     def forecast(
         self,
@@ -502,7 +373,6 @@ class Model(nn.Module):
         # Optional Normalization
         # --------------------------------
         if self.use_norm:
-
             means = x_enc.mean(
                 dim=1,
                 keepdim=True
@@ -522,34 +392,21 @@ class Model(nn.Module):
             x_enc = x_enc / stdev
 
         # --------------------------------
-        # Embedding
+        # Original Embedding
         # --------------------------------
-        enc_embed = self.enc_embedding(
+        h_prev = self.enc_embedding(
             x_enc,
             x_mark_enc
         )
+        # h_prev: [B, T, D]
 
-        # enc_out: [B, T, D]
-
+        B, T, D = h_prev.shape
 
         # --------------------------------
-        # Original sequence path
-        # --------------------------------
-        main_out = None
-        main_attns = None
-
-        if self.use_sticln:
-
-            main_out, main_attns = self.main_encoder(
-                enc_embed,
-                attn_mask=None
-            )
-            
-        # --------------------------------
-        # Multi-Skip Token
+        # Multi-skip Sequence Token Embedding
         # --------------------------------
         skip_tokens, skip_mask = self.multi_skip(
-            enc_embed
+            h_prev
         )
 
         # skip_tokens: [B, M, L, D]
@@ -560,121 +417,78 @@ class Model(nn.Module):
         skip_tokens = skip_tokens * skip_mask.unsqueeze(-1).float()
 
         # --------------------------------
-        # Temporal Encoder
+        # MSA over all multi-skip tokens
         # --------------------------------
-        skip_tokens = skip_tokens.reshape(
-            B * M,
-            L,
+        skip_tokens_flat = skip_tokens.reshape(
+            B,
+            M * L,
             D
         )
 
         skip_mask_flat = skip_mask.reshape(
-            B * M,
-            L
+            B,
+            M * L
         )
 
-        enc_out, temporal_attns = self.encoder(
-            skip_tokens,
+        skip_tokens_flat = skip_tokens_flat * skip_mask_flat.unsqueeze(-1).float()
+
+        skip_out_flat, skip_attns = self.skip_msa(
+            skip_tokens_flat,
             attn_mask=None
         )
 
-        # enc_out: [B*M, L, D]
+        skip_out_flat = skip_out_flat * skip_mask_flat.unsqueeze(-1).float()
 
-        enc_out = enc_out.reshape(
+        skip_out = skip_out_flat.reshape(
             B,
             M,
             L,
             D
         )
 
-        skip_mask = skip_mask_flat.reshape(
-            B,
-            M,
-            L
-        )
-
-        enc_out = enc_out * skip_mask.unsqueeze(-1).float()
-
         # --------------------------------
-        # Skip-Time Interaction
+        # Learnable skip weights
         # --------------------------------
-        stif_attns = None
-
-        if self.use_skip_interaction:
-
-            stif_out, stif_attns = self.skip_interaction(
-                enc_out,
-                skip_mask
+        if self.use_skip_weight:
+            skip_weights = torch.softmax(
+                self.skip_logits,
+                dim=0
             )
-
-            # tanh(0)=0 なので、初期状態ではSTIFなしと同じ
-            # つまり最初はWeighted MSTに近く、
-            # 学習が進むとSTIFの寄与を増やせる
-            gate = torch.tanh(self.stif_gate)
-
-            enc_out = enc_out + gate * (stif_out - enc_out)
-
-            enc_out = enc_out * skip_mask.unsqueeze(-1).float()
+        else:
+            skip_weights = None
 
         # --------------------------------
-        # STICLN
+        # STICLN as the main path
         # --------------------------------
-        if self.use_sticln:
-
-            sticln_out = self.sticln(
-                main_out,
-                enc_out,
-                skip_mask
-            )
-
-            sticln_gate = torch.tanh(
-                self.sticln_gate
-            )
-
-            main_out = main_out + sticln_gate * (sticln_out - main_out)
-
-        # --------------------------------
-        # Weighted MST Pooling
-        # --------------------------------
-        pooled, weights = self.weighted_pooling(
-            enc_out,
-            skip_mask
+        h = self.sticln(
+            h_prev,
+            skip_out,
+            skip_mask,
+            skip_weights=skip_weights
         )
-
-        # pooled: [B, M*D]
-        # weights: [M]
+        # h: [B, T, D]
 
         # --------------------------------
-        # Gated fusion with original path
+        # Dropout -> Projection
         # --------------------------------
-        if self.use_sticln:
+        h = self.dropout_layer(h)
 
-            main_pooled = main_out.mean(dim=1)
-            # [B, D]
+        # [B, T, D] -> [B, D, T]
+        h = h.transpose(1, 2)
 
-            main_pooled = self.main_fusion(main_pooled)
-            # [B, M*D]
+        # [B, D, T] -> [B, D, pred_len]
+        out = self.time_projection(h)
 
-            main_gate = torch.tanh(self.main_gate)
+        # [B, D, pred_len] -> [B, pred_len, D]
+        out = out.transpose(1, 2)
 
-            pooled = pooled + main_gate * main_pooled
-
-        # --------------------------------
-        # Prediction
-        # --------------------------------
-        out = self.head(pooled)
-
-        out = out.view(
-            B,
-            self.pred_len,
-            self.c_out
-        )
+        # [B, pred_len, D] -> [B, pred_len, c_out]
+        out = self.output_projection(out)
 
         # --------------------------------
         # Optional De-normalization
         # --------------------------------
         if self.use_norm:
-
             out = out * (
                 stdev[:, 0, :self.c_out]
                 .unsqueeze(1)
@@ -688,9 +502,19 @@ class Model(nn.Module):
             )
 
         attns = {
-            "temporal_attns": temporal_attns,
-            "stif_attns": stif_attns
+            "skip_attns": skip_attns
         }
+
+        if self.use_skip_weight:
+            weights = torch.softmax(
+                self.skip_logits.detach(),
+                dim=0
+            )
+        else:
+            weights = torch.ones(
+                self.num_skip,
+                device=out.device
+            ) / self.num_skip
 
         return out, attns, weights
 
@@ -714,57 +538,3 @@ class Model(nn.Module):
             return dec_out[:, -self.pred_len:, :], attns
 
         return dec_out[:, -self.pred_len:, :]
-
-    def get_skip_weights(self):
-
-        if self.use_skip_weight:
-            return torch.softmax(
-                self.weighted_pooling.skip_logits.detach(),
-                dim=0
-            )
-
-        return torch.ones(
-            self.num_skip,
-            device=self.head.weight.device
-        ) / self.num_skip
-
-    def print_skip_weights(self):
-
-        weights = self.get_skip_weights().detach().cpu()
-
-        idx = 0
-
-        for skip in self.skip_rates:
-            for offset in range(skip):
-                print(
-                    f"skip={skip}, offset={offset}: {weights[idx].item():.4f}"
-                )
-                idx += 1
-
-    def get_stif_gate(self):
-
-        if self.use_skip_interaction:
-            return torch.tanh(
-                self.stif_gate.detach()
-            )
-
-        return None
-    
-    def get_sticln_gate(self):
-
-        if self.use_sticln:
-            return torch.tanh(
-                self.sticln_gate.detach()
-            )
-
-        return None
-
-
-    def get_main_gate(self):
-
-        if self.use_sticln:
-            return torch.tanh(
-                self.main_gate.detach()
-            )
-
-        return None
