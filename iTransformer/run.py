@@ -119,7 +119,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--use_sticln',
         type=int,
-        default=0,
+        default=1,
         help='whether to use STICLN'
     )
 
