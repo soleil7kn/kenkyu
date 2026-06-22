@@ -8,15 +8,6 @@ from layers.Embed import DataEmbedding
 
 
 def parse_skip_rates(skip_rates):
-    """
-    skip_ratesを安全にlist[int]へ変換する関数。
-    例:
-        [2]        -> [2]
-        "2"        -> [2]
-        "1,2,4"    -> [1, 2, 4]
-        "[1,2,4]"  -> [1, 2, 4]
-    """
-
     if isinstance(skip_rates, list):
         return [int(s) for s in skip_rates]
 
@@ -43,7 +34,6 @@ class MultiSkipEmbedding(nn.Module):
         self.skip_rates = skip_rates
 
     def forward(self, x):
-
         # x: [B, T, D]
         B, T, D = x.shape
 
@@ -59,9 +49,6 @@ class MultiSkipEmbedding(nn.Module):
 
             for offset in range(skip):
 
-                # 例: skip=2なら
-                # offset=0: x[:, 0::2, :]
-                # offset=1: x[:, 1::2, :]
                 seq = x[:, offset::skip, :]
                 valid_len = seq.shape[1]
 
@@ -107,13 +94,6 @@ class MultiSkipEmbedding(nn.Module):
 
 
 class WeightedMSTPooling(nn.Module):
-    """
-    Weighted Multi-Skip Token Pooling
-
-    Encoder後のskip表現 [B, M, L, D] に対して、
-    1. padding部分を除外してmean pooling
-    2. skip系列ごとにlearnable weightをかける
-    """
 
     def __init__(self, num_skip, d_model, use_weight=True):
         super().__init__()
@@ -133,7 +113,6 @@ class WeightedMSTPooling(nn.Module):
             )
 
     def forward(self, x, mask):
-
         # x   : [B, M, L, D]
         # mask: [B, M, L]
 
@@ -142,10 +121,8 @@ class WeightedMSTPooling(nn.Module):
         mask_float = mask.unsqueeze(-1).float()
         # [B, M, L, 1]
 
-        # padding部分を除外
         x = x * mask_float
 
-        # skipごとにmean pooling
         pooled = x.sum(dim=2) / mask_float.sum(dim=2).clamp_min(1.0)
         # pooled: [B, M, D]
 
@@ -161,13 +138,113 @@ class WeightedMSTPooling(nn.Module):
                 dtype=x.dtype
             ) / M
 
-        # weights: [M]
         pooled = pooled * weights.view(1, M, 1)
 
         # [B, M, D] -> [B, M*D]
         pooled = pooled.reshape(B, M * D)
 
         return pooled, weights
+
+
+class SkipTimeInteraction(nn.Module):
+    """
+    Skip-Time Interaction
+
+    入力:
+        x   : [B, M, L, D]
+        mask: [B, M, L]
+
+    処理:
+        各時刻位置 L ごとに、M方向へAttentionする。
+        つまり、skip系列同士を相互作用させる。
+
+    変形:
+        [B, M, L, D]
+        -> [B, L, M, D]
+        -> [B*L, M, D]
+        -> Encoder
+        -> [B, M, L, D]
+    """
+
+    def __init__(self, configs, num_layers=1):
+        super().__init__()
+
+        self.interaction_encoder = Encoder(
+            [
+                EncoderLayer(
+                    AttentionLayer(
+                        FullAttention(
+                            False,
+                            configs.factor,
+                            attention_dropout=configs.dropout,
+                            output_attention=configs.output_attention
+                        ),
+                        configs.d_model,
+                        configs.n_heads
+                    ),
+                    configs.d_model,
+                    configs.d_ff,
+                    dropout=configs.dropout,
+                    activation=configs.activation
+                )
+                for _ in range(num_layers)
+            ],
+            norm_layer=nn.LayerNorm(configs.d_model)
+        )
+
+    def forward(self, x, mask):
+
+        # x   : [B, M, L, D]
+        # mask: [B, M, L]
+
+        B, M, L, D = x.shape
+
+        mask_float = mask.unsqueeze(-1).float()
+        x = x * mask_float
+
+        # [B, M, L, D] -> [B, L, M, D]
+        x_inter = x.permute(0, 2, 1, 3).contiguous()
+
+        # [B, M, L] -> [B, L, M]
+        mask_inter = mask.permute(0, 2, 1).contiguous()
+
+        # [B, L, M, D] -> [B*L, M, D]
+        x_inter = x_inter.reshape(
+            B * L,
+            M,
+            D
+        )
+
+        # [B, L, M] -> [B*L, M]
+        mask_inter = mask_inter.reshape(
+            B * L,
+            M
+        )
+
+        # padding部分を0にする
+        x_inter = x_inter * mask_inter.unsqueeze(-1).float()
+
+        # skip方向のAttention
+        x_inter, attns = self.interaction_encoder(
+            x_inter,
+            attn_mask=None
+        )
+
+        # padding部分を再度0にする
+        x_inter = x_inter * mask_inter.unsqueeze(-1).float()
+
+        # [B*L, M, D] -> [B, L, M, D]
+        x_inter = x_inter.reshape(
+            B,
+            L,
+            M,
+            D
+        )
+
+        # [B, L, M, D] -> [B, M, L, D]
+        x_inter = x_inter.permute(0, 2, 1, 3).contiguous()
+
+        return x_inter, attns
 
 
 class Model(nn.Module):
@@ -186,34 +263,29 @@ class Model(nn.Module):
         # --------------------------------
         # Skip setting
         # --------------------------------
-        # configsにskip_ratesがなければ[2]を使う
         self.skip_rates = parse_skip_rates(
-            getattr(configs, "skip_rates", [1, 2, 4])
+            getattr(configs, "skip_rates", [2])
         )
 
-        # 例:
-        # skip_rates=[2]       -> M=2
-        # skip_rates=[1,2]     -> M=3
-        # skip_rates=[1,2,4]   -> M=7
         self.num_skip = sum(self.skip_rates)
 
-        # weightを使うかどうか
-        # ablation用にFalseにもできる
-        self.use_skip_weight = getattr(
-            configs,
-            "use_skip_weight",
-            True
+        self.use_skip_weight = bool(
+            getattr(configs, "use_skip_weight", 1)
+        )
+
+        self.use_skip_interaction = bool(
+            getattr(configs, "use_skip_interaction", 1)
+        )
+
+        self.skip_interaction_layers = int(
+            getattr(configs, "skip_interaction_layers", 1)
         )
 
         # --------------------------------
         # Normalization
         # --------------------------------
-        # 純粋にSkipTimeformer系のアイデアだけを見たい場合はFalse推奨。
-        # 以前の良化結果を再現したい場合はTrueでもよい。
-        self.use_norm = getattr(
-            configs,
-            "use_norm",
-            False
+        self.use_norm = bool(
+            getattr(configs, "use_norm", 1)
         )
 
         # --------------------------------
@@ -228,7 +300,7 @@ class Model(nn.Module):
         )
 
         # --------------------------------
-        # Transformer Encoder
+        # Temporal Encoder
         # --------------------------------
         self.encoder = Encoder(
             [
@@ -259,6 +331,21 @@ class Model(nn.Module):
         self.multi_skip = MultiSkipEmbedding(
             skip_rates=self.skip_rates
         )
+
+        # --------------------------------
+        # Skip-Time Interaction
+        # --------------------------------
+        if self.use_skip_interaction:
+            self.skip_interaction = SkipTimeInteraction(
+                configs,
+                num_layers=self.skip_interaction_layers
+            )
+
+            # いきなりSTIFを強く入れると性能が崩れる可能性があるため、
+            # 小さいゲートから始める
+            self.stif_gate = nn.Parameter(
+                torch.tensor(-2.0)
+            )
 
         # --------------------------------
         # Weighted MST Pooling
@@ -330,11 +417,10 @@ class Model(nn.Module):
 
         B, M, L, D = skip_tokens.shape
 
-        # padding部分を明示的に0にする
         skip_tokens = skip_tokens * skip_mask.unsqueeze(-1).float()
 
         # --------------------------------
-        # Encoder
+        # Temporal Encoder
         # --------------------------------
         skip_tokens = skip_tokens.reshape(
             B * M,
@@ -342,21 +428,18 @@ class Model(nn.Module):
             D
         )
 
-        skip_mask = skip_mask.reshape(
+        skip_mask_flat = skip_mask.reshape(
             B * M,
             L
         )
 
-        enc_out, attns = self.encoder(
+        enc_out, temporal_attns = self.encoder(
             skip_tokens,
             attn_mask=None
         )
 
         # enc_out: [B*M, L, D]
 
-        # --------------------------------
-        # Reshape back
-        # --------------------------------
         enc_out = enc_out.reshape(
             B,
             M,
@@ -364,11 +447,34 @@ class Model(nn.Module):
             D
         )
 
-        skip_mask = skip_mask.reshape(
+        skip_mask = skip_mask_flat.reshape(
             B,
             M,
             L
         )
+
+        enc_out = enc_out * skip_mask.unsqueeze(-1).float()
+
+        # --------------------------------
+        # Skip-Time Interaction
+        # --------------------------------
+        stif_attns = None
+
+        if self.use_skip_interaction:
+
+            stif_out, stif_attns = self.skip_interaction(
+                enc_out,
+                skip_mask
+            )
+
+            # gateは初期値 sigmoid(-2.0) ≒ 0.119
+            # つまり最初はWeighted MSTに近く、
+            # 学習が進むとSTIFの寄与を増やせる
+            gate = torch.sigmoid(self.stif_gate)
+
+            enc_out = enc_out + gate * (stif_out - enc_out)
+
+            enc_out = enc_out * skip_mask.unsqueeze(-1).float()
 
         # --------------------------------
         # Weighted MST Pooling
@@ -409,6 +515,11 @@ class Model(nn.Module):
                 .repeat(1, self.pred_len, 1)
             )
 
+        attns = {
+            "temporal_attns": temporal_attns,
+            "stif_attns": stif_attns
+        }
+
         return out, attns, weights
 
     def forward(
@@ -427,18 +538,12 @@ class Model(nn.Module):
             x_mark_dec
         )
 
-        # 学習コード側がoutput_attention=Trueを想定している場合
         if self.output_attention:
             return dec_out[:, -self.pred_len:, :], attns
 
         return dec_out[:, -self.pred_len:, :]
 
     def get_skip_weights(self):
-        """
-        学習後にskip weightを確認する用。
-        例:
-            print(model.get_skip_weights())
-        """
 
         if self.use_skip_weight:
             return torch.softmax(
@@ -447,5 +552,28 @@ class Model(nn.Module):
             )
 
         return torch.ones(
-            self.num_skip
+            self.num_skip,
+            device=self.head.weight.device
         ) / self.num_skip
+
+    def print_skip_weights(self):
+
+        weights = self.get_skip_weights().detach().cpu()
+
+        idx = 0
+
+        for skip in self.skip_rates:
+            for offset in range(skip):
+                print(
+                    f"skip={skip}, offset={offset}: {weights[idx].item():.4f}"
+                )
+                idx += 1
+
+    def get_stif_gate(self):
+
+        if self.use_skip_interaction:
+            return torch.sigmoid(
+                self.stif_gate.detach()
+            )
+
+        return None
