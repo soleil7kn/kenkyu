@@ -96,7 +96,7 @@ class Model(nn.Module):
         )
 
         # Prediction Head
-        self.skip_rates = [1, 2]
+        self.skip_rates = [2]
  
         self.num_skip = sum(self.skip_rates)
 
@@ -185,7 +185,6 @@ class Model(nn.Module):
 
         # skipごとに重み付け
         enc_out = enc_out * weights
-
         
         enc_out = enc_out.reshape(
             B,
