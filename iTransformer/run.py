@@ -105,21 +105,21 @@ if __name__ == '__main__':
     parser.add_argument(
         '--use_skip_interaction',
         type=int,
-        default=1,
+        default=0,
         help='whether to use Skip-Time Interaction'
     )
 
     parser.add_argument(
         '--skip_interaction_layers',
         type=int,
-        default=1,
+        default=0,
         help='number of Skip-Time Interaction layers'
     )
 
     parser.add_argument(
         '--use_sticln',
         type=int,
-        default=1,
+        default=0,
         help='whether to use STICLN'
     )
 
@@ -227,8 +227,6 @@ if __name__ == '__main__':
                 print("main gate after tanh:")
                 print(main_gate)
 
-            else:
-                print("This model does not have weighted_pooling.")
 
             if args.do_predict:
                 print('>>>>>>>predicting : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
@@ -254,7 +252,12 @@ if __name__ == '__main__':
             args.embed,
             args.distil,
             args.des,
-            args.class_strategy, ii)
+            args.class_strategy,
+            args.skip_rates,
+            args.use_skip_weight,
+            args.use_skip_interaction,
+            args.use_sticln, 
+            ii)
 
         exp = Exp(args)  # set experiments
         print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))

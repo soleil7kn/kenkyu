@@ -17,4 +17,9 @@ python -u run.py \
   --des 'Exp' \
   --d_model 256 \
   --d_ff 256 \
-  --itr 1
+  --itr 1 \
+  --skip_rates 2 \
+  --use_skip_weight 1 \
+  --use_skip_interaction 0 \
+  --use_sticln 1 \
+  --use_norm 1
