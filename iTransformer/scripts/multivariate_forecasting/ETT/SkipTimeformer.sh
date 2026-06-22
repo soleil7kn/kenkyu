@@ -21,5 +21,5 @@ python -u run.py \
   --skip_rates 2 \
   --use_skip_weight 1 \
   --use_skip_interaction 0 \
-  --use_sticln 1 \
+  --use_sticln 0 \
   --use_norm 1
