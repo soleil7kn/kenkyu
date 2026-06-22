@@ -13,14 +13,13 @@ class MultiSkipEmbedding(nn.Module):
         super().__init__()
         self.skip_rates = skip_rates
 
-
     def forward(self, x):
 
         # x: [B, T, D]
-
         B, T, D = x.shape
 
         outputs = []
+        masks = []
 
         max_len = max(
             (T + s - 1) // s
@@ -31,23 +30,50 @@ class MultiSkipEmbedding(nn.Module):
 
             for offset in range(skip):
 
-                seq = x[:, offset::skip, :]
+                seq = x[:, offset::skip, :]   # [B, L_i, D]
+                valid_len = seq.shape[1]
 
-                if seq.shape[1] < max_len:
+                # 有効token部分はTrue
+                mask = torch.ones(
+                    B,
+                    valid_len,
+                    device=x.device,
+                    dtype=torch.bool
+                )
 
-                    pad = max_len - seq.shape[1]
+                # padding
+                if valid_len < max_len:
 
-                    seq = F.pad(
-                        seq,
-                        (0, 0, 0, pad)
+                    pad_len = max_len - valid_len
+
+                    pad_seq = torch.zeros(
+                        B,
+                        pad_len,
+                        D,
+                        device=x.device,
+                        dtype=x.dtype
                     )
 
-                outputs.append(seq)
+                    pad_mask = torch.zeros(
+                        B,
+                        pad_len,
+                        device=x.device,
+                        dtype=torch.bool
+                    )
 
-        # [B, token_num, token_len, D]
+                    seq = torch.cat([seq, pad_seq], dim=1)
+                    mask = torch.cat([mask, pad_mask], dim=1)
+
+                outputs.append(seq)
+                masks.append(mask)
+
+        # z: [B, M, L, D]
         z = torch.stack(outputs, dim=1)
 
-        return z
+        # mask: [B, M, L]
+        mask = torch.stack(masks, dim=1)
+
+        return z, mask
 
 
 class Model(nn.Module):
@@ -56,13 +82,19 @@ class Model(nn.Module):
 
         super().__init__()
 
+        self.seq_len = configs.seq_len
         self.pred_len = configs.pred_len
         self.output_attention = configs.output_attention
 
         self.enc_in = configs.enc_in
         self.c_out = configs.c_out
 
+        # iTransformerと同じ正規化を使う
+        self.use_norm = getattr(configs, "use_norm", True)
+
+        # -------------------------------
         # Embedding
+        # -------------------------------
         self.enc_embedding = DataEmbedding(
             configs.enc_in,
             configs.d_model,
@@ -71,7 +103,9 @@ class Model(nn.Module):
             configs.dropout
         )
 
+        # -------------------------------
         # Transformer Encoder
+        # -------------------------------
         self.encoder = Encoder(
             [
                 EncoderLayer(
@@ -95,103 +129,164 @@ class Model(nn.Module):
             norm_layer=nn.LayerNorm(configs.d_model)
         )
 
-        # Prediction Head
+        # -------------------------------
+        # Multi Skip Setting
+        # -------------------------------
         self.skip_rates = [2]
- 
-        self.num_skip = sum(self.skip_rates)
 
-        self.max_len = max(
-            (configs.seq_len + s - 1) // s
-            for s in self.skip_rates
-        )
-        
-        self.skip_logits = nn.Parameter(
-            torch.zeros(self.num_skip)
-        )
+        # step=[2] の場合、offset=0,1 の2系列になる
+        self.num_skip = sum(self.skip_rates)
 
         self.multi_skip = MultiSkipEmbedding(
             skip_rates=self.skip_rates
         )
 
+        # skipごとの学習可能重み
+        self.skip_logits = nn.Parameter(
+            torch.zeros(self.num_skip)
+        )
+
+        # -------------------------------
+        # Prediction Head
+        # -------------------------------
+        # 変更前:
+        # self.num_skip * self.max_len * configs.d_model
+        #
+        # 変更後:
+        # masked mean pooling後は [B, M, D] なので、
+        # flattenして [B, M*D] にする
         self.head = nn.Linear(
-            self.num_skip * self.max_len * configs.d_model,
+            self.num_skip * configs.d_model,
             self.pred_len * configs.c_out
         )
 
     def forecast(
-    self,
-    x_enc,
-    x_mark_enc,
-    x_dec,
-    x_mark_dec
+        self,
+        x_enc,
+        x_mark_enc,
+        x_dec,
+        x_mark_dec
     ):
+
+        # --------------------------------
+        # Normalization
+        # --------------------------------
+        if self.use_norm:
+
+            means = x_enc.mean(
+                dim=1,
+                keepdim=True
+            ).detach()
+
+            x_enc = x_enc - means
+
+            stdev = torch.sqrt(
+                torch.var(
+                    x_enc,
+                    dim=1,
+                    keepdim=True,
+                    unbiased=False
+                ) + 1e-5
+            )
+
+            x_enc = x_enc / stdev
 
         # --------------------------------
         # Embedding
         # --------------------------------
-
         enc_out = self.enc_embedding(
             x_enc,
             x_mark_enc
         )
 
+        # enc_out: [B, T, D]
 
         # --------------------------------
-        # Multi Skip
+        # Multi Skip Embedding
         # --------------------------------
-
-        skip_tokens = self.multi_skip(
+        skip_tokens, skip_mask = self.multi_skip(
             enc_out
         )
 
-        # print("skip_tokens :", skip_tokens.shape)
+        # skip_tokens: [B, M, L, D]
+        # skip_mask  : [B, M, L]
 
-        # [B, M, L, D]
         B, M, L, D = skip_tokens.shape
 
+        # padding tokenを明示的に0にする
+        skip_tokens = skip_tokens * skip_mask.unsqueeze(-1).float()
+
+        # Encoderに入れるために reshape
         skip_tokens = skip_tokens.reshape(
             B * M,
             L,
             D
         )
 
+        # maskも同じようにreshape
+        skip_mask = skip_mask.reshape(
+            B * M,
+            L
+        )
 
         # --------------------------------
         # Encoder
         # --------------------------------
-
         enc_out, attns = self.encoder(
             skip_tokens,
             attn_mask=None
         )
 
+        # enc_out: [B*M, L, D]
 
         # --------------------------------
-        # Pooling
+        # Reshape back
         # --------------------------------
-
         enc_out = enc_out.reshape(
             B,
             M,
             L,
             D
         )
-        
-        # skip重みを計算
+
+        skip_mask = skip_mask.reshape(
+            B,
+            M,
+            L
+        )
+
+        # --------------------------------
+        # Masked Mean Pooling
+        # --------------------------------
+        mask_float = skip_mask.unsqueeze(-1).float()
+        # [B, M, L, 1]
+
+        enc_out = enc_out * mask_float
+
+        pooled = enc_out.sum(dim=2) / mask_float.sum(dim=2).clamp_min(1.0)
+
+        # pooled: [B, M, D]
+
+        # --------------------------------
+        # Learnable Skip Weight
+        # --------------------------------
         weights = torch.softmax(
             self.skip_logits,
             dim=0
-        ).view(1, M, 1, 1)
+        ).view(1, M, 1)
 
-        # skipごとに重み付け
-        enc_out = enc_out * weights
-        
-        enc_out = enc_out.reshape(
+        pooled = pooled * weights
+
+        # [B, M, D] -> [B, M*D]
+        pooled = pooled.reshape(
             B,
-            M * L * D
+            M * D
         )
 
-        out = self.head(enc_out)
+        # --------------------------------
+        # Prediction
+        # --------------------------------
+        out = self.head(pooled)
 
         out = out.view(
             B,
@@ -199,7 +294,24 @@ class Model(nn.Module):
             self.c_out
         )
 
-        return out
+        # --------------------------------
+        # De-normalization
+        # --------------------------------
+        if self.use_norm:
+
+            out = out * (
+                stdev[:, 0, :self.c_out]
+                .unsqueeze(1)
+                .repeat(1, self.pred_len, 1)
+            )
+
+            out = out + (
+                means[:, 0, :self.c_out]
+                .unsqueeze(1)
+                .repeat(1, self.pred_len, 1)
+            )
+
+        return out, attns
 
     def forward(
         self,
@@ -210,11 +322,14 @@ class Model(nn.Module):
         mask=None
     ):
 
-        dec_out = self.forecast(
+        dec_out, attns = self.forecast(
             x_enc,
             x_mark_enc,
             x_dec,
             x_mark_dec
         )
 
-        return dec_out
+        if self.output_attention:
+            return dec_out[:, -self.pred_len:, :], attns
+        else:
+            return dec_out[:, -self.pred_len:, :]
