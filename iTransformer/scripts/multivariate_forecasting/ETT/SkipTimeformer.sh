@@ -18,8 +18,8 @@ python -u run.py \
   --d_model 256 \
   --d_ff 256 \
   --itr 1 \
-  --skip_rates 2 \
-  --use_skip_weight 0 \
+  --skip_rates 1, 2 \
+  --use_skip_weight 1 \
   --use_skip_interaction 0 \
   --use_sticln 0 \
   --use_norm 1
