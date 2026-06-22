@@ -33,7 +33,6 @@ class MultiSkipEmbedding(nn.Module):
                 seq = x[:, offset::skip, :]   # [B, L_i, D]
                 valid_len = seq.shape[1]
 
-                # 有効token部分はTrue
                 mask = torch.ones(
                     B,
                     valid_len,
@@ -41,7 +40,6 @@ class MultiSkipEmbedding(nn.Module):
                     dtype=torch.bool
                 )
 
-                # padding
                 if valid_len < max_len:
 
                     pad_len = max_len - valid_len
@@ -89,12 +87,11 @@ class Model(nn.Module):
         self.enc_in = configs.enc_in
         self.c_out = configs.c_out
 
-        # iTransformerと同じ正規化を使う
-        self.use_norm = getattr(configs, "use_norm", True)
-
-        # -------------------------------
+        # --------------------------------
         # Embedding
-        # -------------------------------
+        # --------------------------------
+        # iTransformerのDataEmbedding_invertedではなく、
+        # 通常の時系列方向Embeddingを使う
         self.enc_embedding = DataEmbedding(
             configs.enc_in,
             configs.d_model,
@@ -103,9 +100,9 @@ class Model(nn.Module):
             configs.dropout
         )
 
-        # -------------------------------
+        # --------------------------------
         # Transformer Encoder
-        # -------------------------------
+        # --------------------------------
         self.encoder = Encoder(
             [
                 EncoderLayer(
@@ -129,12 +126,13 @@ class Model(nn.Module):
             norm_layer=nn.LayerNorm(configs.d_model)
         )
 
-        # -------------------------------
-        # Multi Skip Setting
-        # -------------------------------
+        # --------------------------------
+        # Multi-Skip Setting
+        # --------------------------------
         self.skip_rates = [2]
 
-        # step=[2] の場合、offset=0,1 の2系列になる
+        # step=[2] の場合、
+        # offset=0 と offset=1 の2系列
         self.num_skip = sum(self.skip_rates)
 
         self.multi_skip = MultiSkipEmbedding(
@@ -146,15 +144,11 @@ class Model(nn.Module):
             torch.zeros(self.num_skip)
         )
 
-        # -------------------------------
+        # --------------------------------
         # Prediction Head
-        # -------------------------------
-        # 変更前:
-        # self.num_skip * self.max_len * configs.d_model
-        #
-        # 変更後:
-        # masked mean pooling後は [B, M, D] なので、
-        # flattenして [B, M*D] にする
+        # --------------------------------
+        # masked mean pooling後は [B, M, D]
+        # それを [B, M*D] にして予測する
         self.head = nn.Linear(
             self.num_skip * configs.d_model,
             self.pred_len * configs.c_out
@@ -169,31 +163,9 @@ class Model(nn.Module):
     ):
 
         # --------------------------------
-        # Normalization
-        # --------------------------------
-        if self.use_norm:
-
-            means = x_enc.mean(
-                dim=1,
-                keepdim=True
-            ).detach()
-
-            x_enc = x_enc - means
-
-            stdev = torch.sqrt(
-                torch.var(
-                    x_enc,
-                    dim=1,
-                    keepdim=True,
-                    unbiased=False
-                ) + 1e-5
-            )
-
-            x_enc = x_enc / stdev
-
-        # --------------------------------
         # Embedding
         # --------------------------------
+        # use_normは入れない
         enc_out = self.enc_embedding(
             x_enc,
             x_mark_enc
@@ -202,7 +174,7 @@ class Model(nn.Module):
         # enc_out: [B, T, D]
 
         # --------------------------------
-        # Multi Skip Embedding
+        # Multi-Skip Token
         # --------------------------------
         skip_tokens, skip_mask = self.multi_skip(
             enc_out
@@ -213,25 +185,23 @@ class Model(nn.Module):
 
         B, M, L, D = skip_tokens.shape
 
-        # padding tokenを明示的に0にする
+        # padding部分を0にする
         skip_tokens = skip_tokens * skip_mask.unsqueeze(-1).float()
 
-        # Encoderに入れるために reshape
+        # --------------------------------
+        # Encoder
+        # --------------------------------
         skip_tokens = skip_tokens.reshape(
             B * M,
             L,
             D
         )
 
-        # maskも同じようにreshape
         skip_mask = skip_mask.reshape(
             B * M,
             L
         )
 
-        # --------------------------------
-        # Encoder
-        # --------------------------------
         enc_out, attns = self.encoder(
             skip_tokens,
             attn_mask=None
@@ -240,7 +210,7 @@ class Model(nn.Module):
         # enc_out: [B*M, L, D]
 
         # --------------------------------
-        # Reshape back
+        # Reshape
         # --------------------------------
         enc_out = enc_out.reshape(
             B,
@@ -293,23 +263,6 @@ class Model(nn.Module):
             self.pred_len,
             self.c_out
         )
-
-        # --------------------------------
-        # De-normalization
-        # --------------------------------
-        if self.use_norm:
-
-            out = out * (
-                stdev[:, 0, :self.c_out]
-                .unsqueeze(1)
-                .repeat(1, self.pred_len, 1)
-            )
-
-            out = out + (
-                means[:, 0, :self.c_out]
-                .unsqueeze(1)
-                .repeat(1, self.pred_len, 1)
-            )
 
         return out, attns
 
