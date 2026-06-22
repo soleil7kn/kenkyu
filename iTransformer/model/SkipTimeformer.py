@@ -96,7 +96,7 @@ class Model(nn.Module):
         )
 
         # Prediction Head
-        self.skip_rates = [2]
+        self.skip_rates = [1, 2]
  
         self.num_skip = sum(self.skip_rates)
 
