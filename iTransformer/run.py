@@ -186,10 +186,15 @@ if __name__ == '__main__':
                             idx += 1
 
             if hasattr(model_for_weight, "stif_gate"):
-                gate = torch.sigmoid(
-                    model_for_weight.stif_gate.detach().cpu()
-                )
-                print("stif gate:")
+
+                raw_gate = model_for_weight.stif_gate.detach().cpu()
+
+                gate = torch.tanh(raw_gate)
+
+                print("raw stif gate parameter:")
+                print(raw_gate)
+
+                print("stif gate after tanh:")
                 print(gate)
 
             else:
