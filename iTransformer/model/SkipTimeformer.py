@@ -186,7 +186,6 @@ class Model(nn.Module):
         # skipごとに重み付け
         enc_out = enc_out * weights
 
-        enc_out = enc_out / M
         
         enc_out = enc_out.reshape(
             B,
