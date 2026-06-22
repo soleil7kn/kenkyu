@@ -188,7 +188,7 @@ class Model(nn.Module):
         # --------------------------------
         # configsにskip_ratesがなければ[2]を使う
         self.skip_rates = parse_skip_rates(
-            getattr(configs, "skip_rates", [2])
+            getattr(configs, "skip_rates", [1, 2, 4])
         )
 
         # 例:
