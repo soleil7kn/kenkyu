@@ -172,6 +172,21 @@ if __name__ == '__main__':
 
             model_for_weight = exp.model.module if hasattr(exp.model, "module") else exp.model
 
+            if hasattr(model_for_weight, "get_skip_weights"):
+
+                weights = model_for_weight.get_skip_weights().detach().cpu()
+
+                print("skip weights:")
+                print(weights)
+
+                idx = 0
+                for skip in model_for_weight.skip_rates:
+                    for offset in range(skip):
+                        print(
+                            f"skip={skip}, offset={offset}: {weights[idx].item():.4f}"
+                        )
+                        idx += 1
+
             if hasattr(model_for_weight, "weighted_pooling"):
 
                 weights = torch.softmax(
