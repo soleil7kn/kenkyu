@@ -133,12 +133,31 @@ if __name__ == '__main__':
 
             print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
             exp.test(setting)
-            print(
-                torch.softmax(
-                    exp.model.skip_logits.detach().cpu(),
+
+            model_for_weight = exp.model.module if hasattr(exp.model, "module") else exp.model
+
+            if hasattr(model_for_weight, "weighted_pooling"):
+
+                weights = torch.softmax(
+                    model_for_weight.weighted_pooling.skip_logits.detach().cpu(),
                     dim=0
                 )
-            )
+
+                print("skip weights:")
+                print(weights)
+
+                if hasattr(model_for_weight, "skip_rates"):
+                    idx = 0
+
+                    for skip in model_for_weight.skip_rates:
+                        for offset in range(skip):
+                            print(
+                                f"skip={skip}, offset={offset}: {weights[idx].item():.4f}"
+                            )
+                            idx += 1
+
+            else:
+                print("This model does not have weighted_pooling.")
 
             if args.do_predict:
                 print('>>>>>>>predicting : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
