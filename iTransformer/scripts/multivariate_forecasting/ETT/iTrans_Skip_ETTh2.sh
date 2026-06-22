@@ -6,7 +6,7 @@ python -u run.py \
   --data_path ETTh2.csv \
   --model_id ETTh2_96_96 \
   --model $model_name \
-  --data ETTh1 \
+  --data ETTh2 \
   --features M \
   --seq_len 96 \
   --pred_len 96 \
@@ -30,7 +30,7 @@ python -u run.py \
   --data_path ETTh2.csv \
   --model_id ETTh2_96_192 \
   --model $model_name \
-  --data ETTh1 \
+  --data ETTh2 \
   --features M \
   --seq_len 96 \
   --pred_len 192 \
@@ -54,7 +54,7 @@ python -u run.py \
   --data_path ETTh2.csv \
   --model_id ETTh2_96_336 \
   --model $model_name \
-  --data ETTh1 \
+  --data ETTh2 \
   --features M \
   --seq_len 96 \
   --pred_len 336 \
@@ -78,7 +78,7 @@ python -u run.py \
   --data_path ETTh2.csv \
   --model_id ETTh2_96_720 \
   --model $model_name \
-  --data ETTh1 \
+  --data ETTh2 \
   --features M \
   --seq_len 96 \
   --pred_len 720 \
