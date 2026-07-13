@@ -141,3 +141,51 @@ class DataEmbedding_inverted(nn.Module):
         # x: [Batch Variate d_model]
         return self.dropout(x)
 
+
+class DataEmbedding_wo_pos(nn.Module):
+    """
+    TimeMixer用のEmbedding。
+    位置埋め込みを加えず、値と時刻特徴だけを埋め込む。
+    """
+
+    def __init__(
+        self,
+        c_in,
+        d_model,
+        embed_type='fixed',
+        freq='h',
+        dropout=0.1
+    ):
+        super(DataEmbedding_wo_pos, self).__init__()
+
+        self.value_embedding = TokenEmbedding(
+            c_in=c_in,
+            d_model=d_model
+        )
+
+        self.temporal_embedding = (
+            TemporalEmbedding(
+                d_model=d_model,
+                embed_type=embed_type,
+                freq=freq
+            )
+            if embed_type != 'timeF'
+            else TimeFeatureEmbedding(
+                d_model=d_model,
+                embed_type=embed_type,
+                freq=freq
+            )
+        )
+
+        self.dropout = nn.Dropout(p=dropout)
+
+    def forward(self, x, x_mark):
+        if x_mark is None:
+            x = self.value_embedding(x)
+        else:
+            x = (
+                self.value_embedding(x)
+                + self.temporal_embedding(x_mark)
+            )
+
+        return self.dropout(x)

@@ -123,6 +123,13 @@ if __name__ == '__main__':
         help='whether to use STICLN'
     )
 
+    parser.add_argument(
+    '--task_name',
+    type=str,
+    default='long_term_forecast',
+    help='task name'
+)
+
     args = parser.parse_args()
     args.use_gpu = True if torch.cuda.is_available() and args.use_gpu else False
 

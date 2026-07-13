@@ -1,7 +1,7 @@
 import os
 import torch
 from model import Transformer, Informer, Reformer, Flowformer, Flashformer, \
-    iTransformer, iInformer, iReformer, iFlowformer, iFlashformer, SkipTimeformer, iTrans_Skip
+    iTransformer, iInformer, iReformer, iFlowformer, iFlashformer, SkipTimeformer, iTrans_Skip, TimeMixer
 
 
 class Exp_Basic(object):
@@ -19,7 +19,8 @@ class Exp_Basic(object):
             'iFlowformer': iFlowformer,
             'iFlashformer': iFlashformer,
             'SkipTimeformer': SkipTimeformer,
-            'iTrans_Skip': iTrans_Skip
+            'iTrans_Skip': iTrans_Skip,
+            'TimeMixer': TimeMixer,
         }
         self.device = self._acquire_device()
         self.model = self._build_model().to(self.device)
