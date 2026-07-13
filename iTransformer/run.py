@@ -176,6 +176,31 @@ if __name__ == '__main__':
         help='whether to use future temporal features'
     )
 
+    # TimeMixer + iTransformer refinement用
+    parser.add_argument(
+        '--refiner_d_model',
+        type=int,
+        default=64
+    )
+
+    parser.add_argument(
+        '--refiner_n_heads',
+        type=int,
+        default=4
+    )
+
+    parser.add_argument(
+        '--refiner_d_ff',
+        type=int,
+        default=128
+    )
+
+    parser.add_argument(
+        '--refiner_e_layers',
+        type=int,
+        default=1
+    )
+
     args = parser.parse_args()
     args.use_gpu = True if torch.cuda.is_available() and args.use_gpu else False
 
