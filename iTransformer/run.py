@@ -130,6 +130,52 @@ if __name__ == '__main__':
     help='task name'
 )
 
+# TimeMixer用の設定
+parser.add_argument(
+    '--down_sampling_layers',
+    type=int,
+    default=3,
+    help='number of down-sampling layers'
+)
+
+parser.add_argument(
+    '--down_sampling_method',
+    type=str,
+    default='avg',
+    choices=['avg', 'max', 'conv'],
+    help='down-sampling method'
+)
+
+parser.add_argument(
+    '--down_sampling_window',
+    type=int,
+    default=2,
+    help='down-sampling window size'
+)
+
+parser.add_argument(
+    '--decomp_method',
+    type=str,
+    default='moving_avg',
+    choices=['moving_avg', 'dft_decomp'],
+    help='series decomposition method'
+)
+
+parser.add_argument(
+    '--top_k',
+    type=int,
+    default=5,
+    help='number of selected frequencies in DFT decomposition'
+)
+
+parser.add_argument(
+    '--use_future_temporal_feature',
+    type=int,
+    default=0,
+    choices=[0, 1],
+    help='whether to use future temporal features'
+)
+
     args = parser.parse_args()
     args.use_gpu = True if torch.cuda.is_available() and args.use_gpu else False
 
