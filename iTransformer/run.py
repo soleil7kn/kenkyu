@@ -28,10 +28,12 @@ def set_seed(seed):
     torch.use_deterministic_algorithms(True)
 
 if __name__ == '__main__':
+    """
     fix_seed = 2023
     random.seed(fix_seed)
     torch.manual_seed(fix_seed)
     np.random.seed(fix_seed)
+    """
 
     parser = argparse.ArgumentParser(description='iTransformer')
 
@@ -231,6 +233,10 @@ if __name__ == '__main__':
     )
 
     args = parser.parse_args()
+
+    # モデル生成・DataLoader生成より前に必ず実行する
+    set_seed(args.seed)
+
     args.use_gpu = True if torch.cuda.is_available() and args.use_gpu else False
 
     if args.use_gpu and args.use_multi_gpu:
