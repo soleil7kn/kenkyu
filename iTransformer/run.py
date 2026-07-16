@@ -4,6 +4,28 @@ from experiments.exp_long_term_forecasting import Exp_Long_Term_Forecast
 from experiments.exp_long_term_forecasting_partial import Exp_Long_Term_Forecast_Partial
 import random
 import numpy as np
+import os
+
+def set_seed(seed):
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
+    random.seed(seed)
+    np.random.seed(seed)
+
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    # cuDNNのアルゴリズム選択を固定
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+
+    # TensorFloat-32を無効化して数値差を抑える
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+
+    # 非決定的な演算があればエラーにする
+    torch.use_deterministic_algorithms(True)
 
 if __name__ == '__main__':
     fix_seed = 2023
@@ -201,7 +223,15 @@ if __name__ == '__main__':
         default=1
     )
 
+    parser.add_argument(
+        '--seed',
+        type=int,
+        default=2023,
+        help='random seed for reproducibility'
+    )
+
     args = parser.parse_args()
+    set_seed(args.seed)
     args.use_gpu = True if torch.cuda.is_available() and args.use_gpu else False
 
     if args.use_gpu and args.use_multi_gpu:

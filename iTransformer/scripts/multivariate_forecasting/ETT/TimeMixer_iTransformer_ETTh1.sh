@@ -63,6 +63,7 @@ python -u run.py \
   --refiner_n_heads $refiner_n_heads \
   --refiner_d_ff $refiner_d_ff \
   --refiner_e_layers $refiner_e_layers \
+  --seed 2023 \
   --des Exp \
   --itr 1
 
@@ -108,6 +109,7 @@ python -u run.py \
   --refiner_n_heads $refiner_n_heads \
   --refiner_d_ff $refiner_d_ff \
   --refiner_e_layers $refiner_e_layers \
+  --seed 2023 \
   --des Exp \
   --itr 1
 
@@ -153,6 +155,7 @@ python -u run.py \
   --refiner_n_heads $refiner_n_heads \
   --refiner_d_ff $refiner_d_ff \
   --refiner_e_layers $refiner_e_layers \
+  --seed 2023 \
   --des Exp \
   --itr 1
 
@@ -198,5 +201,6 @@ python -u run.py \
   --refiner_n_heads $refiner_n_heads \
   --refiner_d_ff $refiner_d_ff \
   --refiner_e_layers $refiner_e_layers \
+  --seed 2023 \
   --des Exp \
   --itr 1
