@@ -24,11 +24,11 @@ num_workers=0
 python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-  --root_path ../dataset/ETT-small/ \
-  --data_path ETTh1.csv \
-  --model_id ETTh1_96_96_TimeMixer_iTransformer \
+  --root_path ../dataset/weather/ \
+  --data_path weather.csv \
+  --model_id weather_96_96_TimeMixer_iTransformer \
   --model $model_name \
-  --data ETTh1 \
+  --data custom \
   --features M \
   --seq_len 96 \
   --label_len 0 \
@@ -69,11 +69,11 @@ python -u run.py \
 python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-  --root_path ../dataset/ETT-small/ \
-  --data_path ETTh1.csv \
-  --model_id ETTh1_96_192_TimeMixer_iTransformer \
+  --root_path ../dataset/weather/ \
+  --data_path weather.csv \
+  --model_id weather_96_192_TimeMixer_iTransformer \
   --model $model_name \
-  --data ETTh1 \
+  --data custom \
   --features M \
   --seq_len 96 \
   --label_len 0 \
@@ -114,11 +114,11 @@ python -u run.py \
 python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-  --root_path ../dataset/ETT-small/ \
-  --data_path ETTh1.csv \
-  --model_id ETTh1_96_336_TimeMixer_iTransformer \
+  --root_path ../dataset/weather/ \
+  --data_path weather.csv \
+  --model_id weather_96_336_TimeMixer_iTransformer \
   --model $model_name \
-  --data ETTh1 \
+  --data custom \
   --features M \
   --seq_len 96 \
   --label_len 0 \
@@ -159,11 +159,11 @@ python -u run.py \
 python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-  --root_path ../dataset/ETT-small/ \
-  --data_path ETTh1.csv \
-  --model_id ETTh1_96_720_TimeMixer_iTransformer \
+  --root_path ../dataset/weather/ \
+  --data_path weather.csv \
+  --model_id weather_96_720_TimeMixer_iTransformer \
   --model $model_name \
-  --data ETTh1 \
+  --data custom \
   --features M \
   --seq_len 96 \
   --label_len 0 \
