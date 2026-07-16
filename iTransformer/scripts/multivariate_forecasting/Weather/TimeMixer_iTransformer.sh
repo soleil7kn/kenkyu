@@ -1,5 +1,10 @@
 #!/bin/bash
 
+export PYTHONHASHSEED=2023
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+
 model_name=TimeMixer_iTransformer
 
 e_layers=2
