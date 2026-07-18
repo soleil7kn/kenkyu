@@ -33,21 +33,21 @@ python -u run.py \
   --data_path exchange_rate.csv \
   --model_id exchange_rate_96_96_TimeMixer_iTransformer \
   --model $model_name \
-  --data exchange_rate \
+  --data custom \
   --features M \
   --seq_len 96 \
   --label_len 0 \
   --pred_len 96 \
-  --enc_in 7 \
-  --dec_in 7 \
-  --c_out 7 \
+  --enc_in 8 \
+  --dec_in 8 \
+  --c_out 8 \
   --e_layers $e_layers \
   --d_model $d_model \
   --d_ff $d_ff \
   --n_heads 8 \
   --dropout 0.1 \
   --embed timeF \
-  --freq h \
+  --freq d \
   --activation gelu \
   --factor 1 \
   --learning_rate $learning_rate \
@@ -79,21 +79,21 @@ python -u run.py \
   --data_path exchange_rate.csv \
   --model_id exchange_rate_96_192_TimeMixer_iTransformer \
   --model $model_name \
-  --data exchange_rate \
+  --data custom \
   --features M \
   --seq_len 96 \
   --label_len 0 \
   --pred_len 192 \
-  --enc_in 7 \
-  --dec_in 7 \
-  --c_out 7 \
+  --enc_in 8 \
+  --dec_in 8 \
+  --c_out 8 \
   --e_layers $e_layers \
   --d_model $d_model \
   --d_ff $d_ff \
   --n_heads 8 \
   --dropout 0.1 \
   --embed timeF \
-  --freq h \
+  --freq d \
   --activation gelu \
   --factor 1 \
   --learning_rate $learning_rate \
@@ -125,21 +125,21 @@ python -u run.py \
   --data_path exchange_rate.csv \
   --model_id exchange_rate_96_336_TimeMixer_iTransformer \
   --model $model_name \
-  --data exchange_rate \
+  --data custom \
   --features M \
   --seq_len 96 \
   --label_len 0 \
   --pred_len 336 \
-  --enc_in 7 \
-  --dec_in 7 \
-  --c_out 7 \
+  --enc_in 8 \
+  --dec_in 8 \
+  --c_out 8 \
   --e_layers $e_layers \
   --d_model $d_model \
   --d_ff $d_ff \
   --n_heads 8 \
   --dropout 0.1 \
   --embed timeF \
-  --freq h \
+  --freq d \
   --activation gelu \
   --factor 1 \
   --learning_rate $learning_rate \
@@ -171,21 +171,21 @@ python -u run.py \
   --data_path exchange_rate.csv \
   --model_id exchange_rate_96_720_TimeMixer_iTransformer \
   --model $model_name \
-  --data exchange_rate \
+  --data custom \
   --features M \
   --seq_len 96 \
   --label_len 0 \
   --pred_len 720 \
-  --enc_in 7 \
-  --dec_in 7 \
-  --c_out 7 \
+  --enc_in 8 \
+  --dec_in 8 \
+  --c_out 8 \
   --e_layers $e_layers \
   --d_model $d_model \
   --d_ff $d_ff \
   --n_heads 8 \
   --dropout 0.1 \
   --embed timeF \
-  --freq h \
+  --freq d \
   --activation gelu \
   --factor 1 \
   --learning_rate $learning_rate \
