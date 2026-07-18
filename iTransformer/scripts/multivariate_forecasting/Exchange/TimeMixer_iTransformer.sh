@@ -176,9 +176,9 @@ python -u run.py \
   --seq_len 96 \
   --label_len 0 \
   --pred_len 720 \
-  --enc_in 8 \
-  --dec_in 8 \
-  --c_out 8 \
+  --enc_in 21 \
+  --dec_in 21 \
+  --c_out 21 \
   --e_layers $e_layers \
   --d_model $d_model \
   --d_ff $d_ff \
